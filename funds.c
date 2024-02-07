@@ -46,6 +46,7 @@ uint8_t txn_out[300] =
 #define EMITDET (txn_out + 162)
 #define HOOKACC (txn_out + 120)
 #define OTXNACC (txn_out + 142)
+#define DESTACC (txn_out + 142)
 #define OUTAMT (txn_out + 26)
 #define OUTCUR (txn_out + 34)
 #define OUTISS (txn_out + 54)
@@ -69,6 +70,16 @@ uint8_t txn_out[300] =
         *b++ = (drops_tmp >> 16) & 0xFFU;\
         *b++ = (drops_tmp >>  8) & 0xFFU;\
         *b++ = (drops_tmp >>  0) & 0xFFU;\
+}
+
+#define COPY_20(src, dst)\
+{\
+    *((uint64_t*)(((uint8_t*)(dst)) + 0)) = \
+    *((uint64_t*)(((uint8_t*)(src)) + 0));\
+    *((uint64_t*)(((uint8_t*)(dst)) + 8)) = \
+    *((uint64_t*)(((uint8_t*)(src)) + 8));\
+    *((uint32_t*)(((uint8_t*)(dst)) + 16)) = \
+    *((uint32_t*)(((uint8_t*)(src)) + 16));\
 }
 
 int64_t cbak(uint32_t f)
@@ -271,12 +282,55 @@ int64_t hook(uint32_t r)
             // emit a txn either to the otxn acc or the settlement acc
             if (op == 'W')
             {
-                // RHTODO: check signature
+                // RHTODO check signature/nonce for withdrawal
+
+            }
+            else
+            {
+                // set the destination addr to the settlement addr
+                COPY_20(stl, DESTACC); 
             }
 
-            // RHTODO: check tl balance
+            // check trustline balance
+            slot_subfield(10, sfBalance, 11);
+            if (slot_size(11) != 48)
+                NOPE("Funds: Could not fetch trustline balance.");
+    
+            int64_t xfl_bal = slot_float(11);
 
-            // RHTODO: emit
+            if (xfl_bal <= 0 || !float_compare(xfl_bal, 0, COMPARE_GREATER))
+                NOPE("Funds: Insane balance on trustline.");
+
+            
+            // RHTODO set amount on emitted txn
+            // RHTODO check amount is valid wrt trustline bal
+
+
+            etxn_details(EMITDET, 138);
+            int64_t fee = etxn_fee_base(txn_out, TXNLEN);
+            BE_DROPS(fee);
+            *((uint64_t*)(FEEOUT)) = fee;
+
+            txn_out[15] = (seq >> 24U) & 0xFFU;
+            txn_out[16] = (seq >> 16U) & 0xFFU;
+            txn_out[17] = (seq >>  8U) & 0xFFU;
+            txn_out[18] = seq & 0xFFU;
+
+            seq += 4;
+            txn_out[21] = (seq >> 24U) & 0xFFU;
+            txn_out[22] = (seq >> 16U) & 0xFFU;
+            txn_out[23] = (seq >>  8U) & 0xFFU;
+            txn_out[24] = seq & 0xFFU;
+    
+            trace(SBUF("emit:"), txn_out, TXNLEN_TL, 1);
+
+            uint8_t emithash[32];
+            int64_t emit_result = emit(SBUF(emithash), txn_out, TXNLEN_TL);
+
+            if (op == 'W')
+                DONE("Funds: Emitted withdrawal.");
+
+            DONE("Funds: Emitted settlement.");
 
 
             break;
