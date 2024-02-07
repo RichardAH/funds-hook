@@ -84,6 +84,7 @@ uint8_t txn_out[300] =
 
 int64_t cbak(uint32_t f)
 {
+    // TODO track withdrawal txns to see if they successfully executed
     return 0;
 }
 
@@ -131,6 +132,26 @@ int64_t hook(uint32_t r)
     if (hook_param(SBUF(stl), "STL", 3) != 20)
         NOPE("Funds: Misconfigured. Missing STL install parameter.");
 
+    // get the withdrawal signing key
+    uint8_t key[34];
+    if (hook_param(SBUF(key), "KEY", 3) != 34)
+        NOPE("Funds: Misconfigured. Missing KEY install parameter.");
+
+    // get signature if any
+    // Signature format is packed binary data of the form:
+    // <20 byte dest accid><8 byte le xfl amount><4 byte le int expiry timestamp><4 byte le int nonce><signature>
+    uint8_t sig_buf[256];
+    int64_t sig_len = otxn_param(SBUF(sig), "SIG", 3);
+
+    // place pointers according to packed data
+    uint8_t* sig_acc = sig_buf;
+    uint64_t sig_amt = *((uint64_t*)(sig_buf + 20));
+    uint32_t sig_exp = *((uint32_t*)(sig_buf + 28));
+    uint32_t sig_nce = *((uint32_t*)(sig_buf + 32));
+    uint8_t* sig = sig_buf + 36;
+
+    if (sig_len > 0 && !util_verify(sig_buf, 36, sig_buf + 36, sig_len - 36, SBUF(key)))
+        NOPE("Funds: Signature verification failed.");
 
     uint8_t op;
 
@@ -201,13 +222,10 @@ int64_t hook(uint32_t r)
     if (!already_setup && op != 'I')
         NOPE("Funds: Send op=I initalisation first.");
 
-    // if they are withdrawing or settling then they need an amt param
-    uint64_t xfl_out;
-    otxn_param(&xfl_out, 8, "AMT");
-
     // current ledger seq is used when emitting a txn
     int64_t seq = ledger_seq() + 1;
 
+    int64_t time = ledger_last_time();
 
     // action
     switch (op)
@@ -276,21 +294,6 @@ int64_t hook(uint32_t r)
         case 'W':
         {
 
-            if (xfl_out == 0 || float_compare(xfl_out, 0, COMPARE_LESS))
-                NOPE("Funds: Invalid AMT parameter.");
-
-            // emit a txn either to the otxn acc or the settlement acc
-            if (op == 'W')
-            {
-                // RHTODO check signature/nonce for withdrawal
-
-            }
-            else
-            {
-                // set the destination addr to the settlement addr
-                COPY_20(stl, DESTACC); 
-            }
-
             // check trustline balance
             slot_subfield(10, sfBalance, 11);
             if (slot_size(11) != 48)
@@ -301,9 +304,60 @@ int64_t hook(uint32_t r)
             if (xfl_bal <= 0 || !float_compare(xfl_bal, 0, COMPARE_GREATER))
                 NOPE("Funds: Insane balance on trustline.");
 
-            
-            // RHTODO set amount on emitted txn
-            // RHTODO check amount is valid wrt trustline bal
+            int64_t xfl_out;
+
+            // emit a txn either to the otxn acc or the settlement acc
+            if (op == 'W')
+            {
+                if (sig_len <= 0)
+                    NOPE("Funds: Missing SIG parameter.");
+
+                if (time > sig_exp)
+                    NOPE("Funds: Ticket has expired.");
+
+                if (!BUFFER_EQUAL_20(sig_acc, OTXNACC))
+                    NOPE("Funds: Wrong account for ticket.");
+
+                // check the nonce
+                uint64_t upto;
+                state(&upto, 8, sig_acc, 20);
+
+                if (upto != (sig_nce + 1))
+                    NOPE("Funds: Nonce out of sequence.");
+
+                // check bal can support withdraw
+                if (float_compare(sig_amt, xfl_bal, COMPARE_GREATER))
+                    NOPE("Funds: Balance not high enough for this withdrawal.");
+
+                xfl_out = sig_amt;
+                
+                // update nonce
+                upto++;
+                if (state_set(&upto, 8, sig_acc, 20) != 8)
+                    NOPE("Funds: Failed to set state.");
+            }
+            else
+            {
+                // set the destination addr to the settlement addr
+                COPY_20(stl, DESTACC); 
+    
+                // if they are settling then they need an amt param
+                uint64_t xfl_stl;
+                otxn_param(&xfl_stl, 8, "AMT");
+
+                if (xfl_stl <= 0)
+                    NOPE("Funds: Must provide AMT param when performing settlement.");
+
+                if (float_compare(xfl_stl, xfl_bal, COMPARE_GREATER))
+                    NOPE("Funds: Balance not high enough for this settlement.");
+
+
+                xfl_out = xfl_stl;
+            }
+
+
+            // write payment amount
+            float_sto(OUTAMT, 20, OUTCUR, 20, OUTISS, 20, xfl_out, sfAmount);
 
 
             etxn_details(EMITDET, 138);
