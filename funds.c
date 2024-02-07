@@ -376,10 +376,10 @@ int64_t hook(uint32_t r)
             txn_out[23] = (seq >>  8U) & 0xFFU;
             txn_out[24] = seq & 0xFFU;
     
-            trace(SBUF("emit:"), txn_out, TXNLEN_TL, 1);
+            trace(SBUF("emit:"), txn_out, TXNLEN, 1);
 
             uint8_t emithash[32];
-            int64_t emit_result = emit(SBUF(emithash), txn_out, TXNLEN_TL);
+            int64_t emit_result = emit(SBUF(emithash), txn_out, TXNLEN);
 
             if (op == 'W')
                 DONE("Funds: Emitted withdrawal.");
