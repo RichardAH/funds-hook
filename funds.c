@@ -238,8 +238,8 @@ int64_t hook(uint32_t r)
     {
         case 'I':
         {
-            // if (already_setup)
-            //     DONE("Funds: Already setup trustline.");
+            if (already_setup)
+                DONE("Funds: Already setup trustline.");
 
             // create a trustline ...
             uint8_t xfl_buffer[8];
@@ -391,7 +391,7 @@ int64_t hook(uint32_t r)
             int64_t emit_result = emit(SBUF(emithash), txn_out, TXNLEN);
             if (emit_result < 0)
             {
-                rollback(SBUF("Funds: Emitted Failure."), __LINE__);
+                NOPE("Funds: Withdraw/Settle Emitted Failure.");
             }
 
             if (op == 'W')
