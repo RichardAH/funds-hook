@@ -102,7 +102,7 @@ int64_t hook(uint32_t r)
         DONE("Funds: passing outgoing txn");
 
     int64_t tt = otxn_type();
-    if (tt != ttINVOKE && tt != PAYMENT)
+    if (tt != ttINVOKE && tt != ttPAYMENT)
         NOPE("Funds: Rejecting non-Invoke, non-Payment txn.");
 
     otxn_slot(1);
@@ -141,7 +141,7 @@ int64_t hook(uint32_t r)
     // Signature format is packed binary data of the form:
     // <20 byte dest accid><8 byte le xfl amount><4 byte le int expiry timestamp><4 byte le int nonce><signature>
     uint8_t sig_buf[256];
-    int64_t sig_len = otxn_param(SBUF(sig), "SIG", 3);
+    int64_t sig_len = otxn_param(SBUF(sig_buf), "SIG", 3);
 
     // place pointers according to packed data
     uint8_t* sig_acc = sig_buf;
@@ -155,7 +155,7 @@ int64_t hook(uint32_t r)
 
     uint8_t op;
 
-    if (otxn_param(&op, 1, "OP") != 1)
+    if (otxn_param(&op, 1, "OP", 2) != 1)
         NOPE("Funds: Missing OP parameter on Invoke.");
 
 
@@ -164,10 +164,11 @@ int64_t hook(uint32_t r)
     if (tt == ttPAYMENT)
     {
         // this will fail if flags isn't in the txn, that's also ok.
-        otxn_field(&flags, 4, sfFlags);
+        uint8_t flagbuf[4];
+        otxn_field(flagbuf, 4, sfFlags);
         
         // check for partial payments (0x00020000) -> (0x00000200 LE)
-        if (flags & 0x200U)
+        if (flagbuf[2] & 2U)
             NOPE("Funds: Partial payments are not supported.");
     
 
@@ -175,7 +176,7 @@ int64_t hook(uint32_t r)
             NOPE("Funds: Wrong currency.");
 
 
-        if (!BUFFER_EQUAL_20(amt + 28, OUTISS)
+        if (!BUFFER_EQUAL_20(amt + 28, OUTISS))
             NOPE("Funds: Wrong issuer.");
 
         xfl_in = slot_float(2);
@@ -343,7 +344,7 @@ int64_t hook(uint32_t r)
     
                 // if they are settling then they need an amt param
                 uint64_t xfl_stl;
-                otxn_param(&xfl_stl, 8, "AMT");
+                otxn_param(&xfl_stl, 8, "AMT", 3);
 
                 if (xfl_stl <= 0)
                     NOPE("Funds: Must provide AMT param when performing settlement.");
