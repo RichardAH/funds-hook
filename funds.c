@@ -22,8 +22,7 @@ uint8_t txn_out[300] =
 /*  20,  34 */   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,                                                /* amt cur */
 // vvvvvvvvvvvvvvvvvv ISSUER ACC ID vvvvvvvvvvvvvvvvvvvvvvv
 /*  20,  54 */   
-                 0,0,0,0,0,0,0,0,0,0,
-                 0,0,0,0,0,0,0,0,0,0,
+                 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 
 /*   9,  74 */   0x68U, 0x40U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,                         /* fee      */
 /*  35,  83 */   0x73U, 0x21U, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,       /* pubkey   */
@@ -47,7 +46,7 @@ uint8_t txn_out[300] =
 #define HOOKACC (txn_out + 120)
 #define OTXNACC (txn_out + 142)
 #define DESTACC (txn_out + 142)
-#define OUTAMT (txn_out + 26)
+#define OUTAMT (txn_out + 25)
 #define OUTCUR (txn_out + 34)
 #define OUTISS (txn_out + 54)
 #define CURSHORT (txn_out + 46)
@@ -56,7 +55,7 @@ uint8_t txn_out[300] =
 #define TTOUT (txn_out + 2)         // when it's a TrustSet we set this to 0x14
 #define OUTAMT_TL (txn_out + 25)    // when it's a TrustSet, we set this to 0x63
 #define EMITDET_TL (txn_out + 140)  // when it's a TrustSet Emit Details occurs sooner
-#define TXNLEN_TL 256               // .. and the txn is smaller
+#define TXNLEN_TL 278               // .. and the txn is smaller
 
 #define BE_DROPS(drops)\
 {\
@@ -133,8 +132,8 @@ int64_t hook(uint32_t r)
         NOPE("Funds: Misconfigured. Missing STL install parameter.");
 
     // get the withdrawal signing key
-    uint8_t key[34];
-    if (hook_param(SBUF(key), "KEY", 3) != 34)
+    uint8_t key[33];
+    if (hook_param(SBUF(key), "KEY", 3) != 33)
         NOPE("Funds: Misconfigured. Missing KEY install parameter.");
 
     // get signature if any
@@ -176,11 +175,11 @@ int64_t hook(uint32_t r)
         // check for partial payments (0x00020000) -> (0x00000200 LE)
         if (flags & 0x200U)
             NOPE("Funds: Partial payments are not supported.");
-    
+
+        otxn_field(SBUF(amt), sfAmount);
 
         if (!BUFFER_EQUAL_20(amt + 8, OUTCUR))
             NOPE("Funds: Wrong currency.");
-
 
         if (!BUFFER_EQUAL_20(amt + 28, OUTISS))
             NOPE("Funds: Wrong issuer.");
@@ -243,12 +242,17 @@ int64_t hook(uint32_t r)
                 DONE("Funds: Already setup trustline.");
 
             // create a trustline ...
-            
+            uint8_t xfl_buffer[8];
+            if (otxn_param(xfl_buffer, 8, "AMT", 3) != 8)
+                NOPE("Funds: Misconfigured. Missing AMT otxn parameter.");
+
+            int64_t xfl_out = *((int64_t *)xfl_buffer);
+
+            // write payment amount
+            float_sto(OUTAMT_TL, 49, OUTCUR, 20, OUTISS, 20, xfl_out, sfLimitAmount);
+                    
             // set the template transaction type to trustset
             *TTOUT = 0x14U;
-
-            // set the amount field type to limitamount
-            *OUTAMT_TL = 0x63U;
 
             etxn_details(EMITDET_TL, 138);
             int64_t fee = etxn_fee_base(txn_out, TXNLEN_TL);
@@ -270,7 +274,7 @@ int64_t hook(uint32_t r)
 
             uint8_t emithash[32];
             int64_t emit_result = emit(SBUF(emithash), txn_out, TXNLEN_TL);
-
+            TRACEVAR(emit_result);
             DONE("Funds: Emitted TrustSet to initialize.");
         }
 
@@ -280,7 +284,7 @@ int64_t hook(uint32_t r)
             // pause
             uint8_t paused = (op == 'P' ? 1 : 0);
             state_set(&paused, 1, "P", 1);
-            DONE("Funds: Paused.");
+            DONE("Funds: Paused/Unpaused.");
         }
 
         case 'R':
@@ -329,7 +333,7 @@ int64_t hook(uint32_t r)
                 uint64_t upto;
                 state(&upto, 8, sig_acc, 20);
 
-                if (upto != (sig_nce + 1))
+                if (upto != sig_nce)
                     NOPE("Funds: Nonce out of sequence.");
 
                 // check bal can support withdraw
@@ -362,10 +366,8 @@ int64_t hook(uint32_t r)
                 xfl_out = xfl_stl;
             }
 
-
             // write payment amount
-            float_sto(OUTAMT, 20, OUTCUR, 20, OUTISS, 20, xfl_out, sfAmount);
-
+            float_sto(OUTAMT, 49, OUTCUR, 20, OUTISS, 20, xfl_out, sfAmount);
 
             etxn_details(EMITDET, 138);
             int64_t fee = etxn_fee_base(txn_out, TXNLEN);
@@ -387,6 +389,10 @@ int64_t hook(uint32_t r)
 
             uint8_t emithash[32];
             int64_t emit_result = emit(SBUF(emithash), txn_out, TXNLEN);
+            if (emit_result < 0)
+            {
+                NOPE("Funds: Withdraw/Settle Emitted Failure.");
+            }
 
             if (op == 'W')
                 DONE("Funds: Emitted withdrawal.");
