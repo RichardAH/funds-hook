@@ -41,14 +41,12 @@ uint8_t txn_out[300] =
 #define TLACC (txn_out + 54) /* set it above!! */
 
 #define TXNLEN 300
-#define FLS_OUT (txn_out + 15U)
-#define LLS_OUT (txn_out + 21U)
 #define FEEOUT (txn_out + 75)
 #define EMITDET (txn_out + 162)
 #define HOOKACC (txn_out + 120)
 #define OTXNACC (txn_out + 142)
 #define DESTACC (txn_out + 142)
-#define OUTAMT (txn_out + 26)
+#define OUTAMT (txn_out + 25)
 #define OUTCUR (txn_out + 34)
 #define OUTISS (txn_out + 54)
 #define CURSHORT (txn_out + 46)
@@ -134,8 +132,8 @@ int64_t hook(uint32_t r)
         NOPE("Funds: Misconfigured. Missing STL install parameter.");
 
     // get the withdrawal signing key
-    uint8_t key[34];
-    if (hook_param(SBUF(key), "KEY", 3) != 34)
+    uint8_t key[33];
+    if (hook_param(SBUF(key), "KEY", 3) != 33)
         NOPE("Funds: Misconfigured. Missing KEY install parameter.");
 
     // get signature if any
@@ -177,7 +175,9 @@ int64_t hook(uint32_t r)
         // check for partial payments (0x00020000) -> (0x00000200 LE)
         if (flags & 0x200U)
             NOPE("Funds: Partial payments are not supported.");
-    
+
+        otxn_field(SBUF(amt), sfAmount);
+
         if (!BUFFER_EQUAL_20(amt + 8, OUTCUR))
             NOPE("Funds: Wrong currency.");
 
@@ -238,16 +238,8 @@ int64_t hook(uint32_t r)
     {
         case 'I':
         {
-            if (already_setup)
-                DONE("Funds: Already setup trustline.");
-
-            // TXN PREPARE: FirstLedgerSequence
-            uint32_t fls = (uint32_t)ledger_seq() + 1;
-            *((uint32_t *)(FLS_OUT)) = FLIP_ENDIAN(fls);
-
-            // TXN PREPARE: LastLedgerSequense
-            uint32_t lls = fls + 4;
-            *((uint32_t *)(LLS_OUT)) = FLIP_ENDIAN(lls);
+            // if (already_setup)
+            //     DONE("Funds: Already setup trustline.");
 
             // create a trustline ...
             uint8_t xfl_buffer[8];
@@ -292,7 +284,7 @@ int64_t hook(uint32_t r)
             // pause
             uint8_t paused = (op == 'P' ? 1 : 0);
             state_set(&paused, 1, "P", 1);
-            DONE("Funds: Paused.");
+            DONE("Funds: Paused/Unpaused.");
         }
 
         case 'R':
@@ -374,10 +366,8 @@ int64_t hook(uint32_t r)
                 xfl_out = xfl_stl;
             }
 
-
             // write payment amount
-            float_sto(OUTAMT, 20, OUTCUR, 20, OUTISS, 20, xfl_out, sfAmount);
-
+            float_sto(OUTAMT, 49, OUTCUR, 20, OUTISS, 20, xfl_out, sfAmount);
 
             etxn_details(EMITDET, 138);
             int64_t fee = etxn_fee_base(txn_out, TXNLEN);
@@ -399,6 +389,10 @@ int64_t hook(uint32_t r)
 
             uint8_t emithash[32];
             int64_t emit_result = emit(SBUF(emithash), txn_out, TXNLEN);
+            if (emit_result < 0)
+            {
+                rollback(SBUF("Funds: Emitted Failure."), __LINE__);
+            }
 
             if (op == 'W')
                 DONE("Funds: Emitted withdrawal.");
