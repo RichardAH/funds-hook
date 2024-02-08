@@ -150,8 +150,14 @@ int64_t hook(uint32_t r)
     uint32_t sig_nce = *((uint32_t*)(sig_buf + 32));
     uint8_t* sig = sig_buf + 36;
 
-    if (sig_len > 0 && !util_verify(sig_buf, 36, sig_buf + 36, sig_len - 36, SBUF(key)))
-        NOPE("Funds: Signature verification failed.");
+    if (sig_len > 0)
+    {
+        if (sig_len < 80)
+            NOPE("Funds: Signature too short.");
+
+        if (!util_verify(sig_buf, 36, sig_buf + 36, sig_len - 36, SBUF(key)))
+            NOPE("Funds: Signature verification failed.");
+    }
 
     uint8_t op;
 
