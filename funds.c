@@ -22,8 +22,7 @@ uint8_t txn_out[300] =
 /*  20,  34 */   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,                                                /* amt cur */
 // vvvvvvvvvvvvvvvvvv ISSUER ACC ID vvvvvvvvvvvvvvvvvvvvvvv
 /*  20,  54 */   
-                 0,0,0,0,0,0,0,0,0,0,
-                 0,0,0,0,0,0,0,0,0,0,
+                 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 
 /*   9,  74 */   0x68U, 0x40U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,                         /* fee      */
 /*  35,  83 */   0x73U, 0x21U, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,       /* pubkey   */
@@ -42,6 +41,8 @@ uint8_t txn_out[300] =
 #define TLACC (txn_out + 54) /* set it above!! */
 
 #define TXNLEN 300
+#define FLS_OUT (txn_out + 15U)
+#define LLS_OUT (txn_out + 21U)
 #define FEEOUT (txn_out + 75)
 #define EMITDET (txn_out + 162)
 #define HOOKACC (txn_out + 120)
@@ -56,7 +57,7 @@ uint8_t txn_out[300] =
 #define TTOUT (txn_out + 2)         // when it's a TrustSet we set this to 0x14
 #define OUTAMT_TL (txn_out + 25)    // when it's a TrustSet, we set this to 0x63
 #define EMITDET_TL (txn_out + 140)  // when it's a TrustSet Emit Details occurs sooner
-#define TXNLEN_TL 256               // .. and the txn is smaller
+#define TXNLEN_TL 278               // .. and the txn is smaller
 
 #define BE_DROPS(drops)\
 {\
@@ -234,6 +235,14 @@ int64_t hook(uint32_t r)
             if (already_setup)
                 DONE("Funds: Already setup trustline.");
 
+            // TXN PREPARE: FirstLedgerSequence
+            uint32_t fls = (uint32_t)ledger_seq() + 1;
+            *((uint32_t *)(FLS_OUT)) = FLIP_ENDIAN(fls);
+
+            // TXN PREPARE: LastLedgerSequense
+            uint32_t lls = fls + 4;
+            *((uint32_t *)(LLS_OUT)) = FLIP_ENDIAN(lls);
+
             // create a trustline ...
             uint8_t xfl_buffer[8];
             if (otxn_param(xfl_buffer, 8, "AMT", 3) != 8)
@@ -247,11 +256,7 @@ int64_t hook(uint32_t r)
             // set the template transaction type to trustset
             *TTOUT = 0x14U;
 
-            // set the amount field type to limitamount
-            // *OUTAMT_TL = 0x63U;
-
             etxn_details(EMITDET_TL, 138);
-            
             int64_t fee = etxn_fee_base(txn_out, TXNLEN_TL);
             BE_DROPS(fee);
             *((uint64_t*)(FEEOUT)) = fee;
